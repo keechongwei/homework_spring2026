@@ -12,6 +12,7 @@ import torch
 import tyro
 import wandb
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from hw1_imitation.data import (
     Normalizer,
@@ -20,7 +21,7 @@ from hw1_imitation.data import (
     load_pusht_zarr,
 )
 from hw1_imitation.model import build_policy, PolicyType
-from hw1_imitation.evaluation import Logger
+from hw1_imitation.evaluation import Logger,evaluate_policy
 
 LOGDIR_PREFIX = "exp"
 
@@ -31,7 +32,7 @@ class TrainConfig:
     data_dir: Path = Path("data")
 
     # The policy type -- either MSE or flow.
-    policy_type: PolicyType = "mse"
+    policy_type: PolicyType = "flow"
     # The number of denoising steps to use for the flow policy (has no effect for the MSE policy).
     flow_num_steps: int = 10
     # The action chunk size.
@@ -118,6 +119,12 @@ def run_training(config: TrainConfig) -> None:
         hidden_dims=config.hidden_dims,
     ).to(device)
 
+    # using torch.compile to speed up training
+    model = torch.compile(
+        model,
+        mode="default", 
+    )
+
     exp_name = f"seed_{config.seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     if config.exp_name is not None:
         exp_name += f"_{config.exp_name}"
@@ -128,6 +135,54 @@ def run_training(config: TrainConfig) -> None:
     logger = Logger(log_dir)
 
     ### TODO: PUT YOUR MAIN TRAINING LOOP HERE ###
+    optimizer = torch.optim.Adam(
+        model.parameters(), lr=config.lr, weight_decay=config.weight_decay
+    )
+
+    # total_steps = config.num_epochs * len(loader)
+
+    # scheduler = CosineAnnealingLR(optimizer,T_max = total_steps)
+
+    # zero out initial gradients, set_to_none for memory efficiency by not saving intermediary tensors
+    optimizer.zero_grad(set_to_none=True)
+
+    for epoch in range(config.num_epochs):
+        model.train()
+
+        for batch_idx, (state_batch, action_batch) in enumerate(loader):
+            state_batch = state_batch.to(device)
+            action_batch = action_batch.to(device)
+
+            loss = model.compute_loss(state_batch, action_batch)
+
+            loss.backward()
+
+            optimizer.step()
+            # scheduler.step()
+            optimizer.zero_grad(set_to_none=True)
+
+            global_step = epoch * len(loader) + batch_idx
+
+            if global_step % config.log_interval == 0:
+                wandb.log({"train/loss": loss.item()}, step=global_step)
+                print(f"Epoch [{epoch}/{config.num_epochs}] Step [{global_step}] Loss: {loss.item():.4f}")
+
+            if global_step % config.eval_interval == 0:
+                evaluate_policy(
+                    model,
+                    normalizer,
+                    device,
+                    config.chunk_size,
+                    config.video_size,
+                    config.num_video_episodes,
+                    config.flow_num_steps,
+                    global_step,
+                    logger
+                )
+                # # evaluate policy sets model to model.eval() so set back to train mode
+                # model.train()
+
+
 
     logger.dump_for_grading()
 
