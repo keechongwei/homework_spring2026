@@ -60,8 +60,18 @@ class MLPPolicy(nn.Module):
     def get_action(self, obs: np.ndarray) -> np.ndarray:
         """Takes a single observation (as a numpy array) and returns a single action (as a numpy array)."""
         # TODO: implement get_action
-        action = None
+        obs = ptu.from_numpy(obs) 
 
+        if len(obs.shape) == 1:
+            obs = obs.unsqueeze(0) 
+        
+        dist = self.forward(obs)
+        action = dist.sample()
+        action = action.cpu().numpy()
+
+        if action.shape[0] == 1:
+            action = action.squeeze(0)
+            
         return action
 
     def forward(self, obs: torch.FloatTensor):
@@ -72,10 +82,19 @@ class MLPPolicy(nn.Module):
         """
         if self.discrete:
             # TODO: define the forward pass for a policy with a discrete action space.
-            pass
+            out = self.logits_net(obs)
+            
+            # use torch.distribution.Distribution
+            # has built in log_probs() and sample() function
+            out_dist = distributions.Categorical(logits = out)
         else:
             # TODO: define the forward pass for a policy with a continuous action space.
-            pass
+            out = self.mean_net(obs)
+            std = torch.exp(self.logstd)
+            out_dist = distributions.Normal(out,std)
+        
+        return out_dist
+            
 
     def update(self, obs: np.ndarray, actions: np.ndarray, *args, **kwargs) -> dict:
         """
@@ -99,11 +118,26 @@ class MLPPolicyPG(MLPPolicy):
         actions = ptu.from_numpy(actions)
         advantages = ptu.from_numpy(advantages)
 
+        self.optimizer.zero_grad()
+
         # TODO: compute the policy gradient actor loss
-        loss = None
+        dist = self.forward(obs)
+        log_probs = dist.log_prob(actions)
+
+        # if continuous actions, log_probs will be of dimension [batch_size, action_dim]
+        # so to get [a|s] must sum over all action_dim
+        # sum instead of multiply because log turns mult into sum
+        if log_probs.dim() > 1:
+            log_probs = log_probs.sum(-1)
+
+        # Advantages measure whether an action is relatively better or worse 
+        # A(s,a) = Q(s,a) - V(s)
+        # Q(s,a) = r(s,a) + gamma* E(V(s'))    
+        loss = -(log_probs * advantages).mean()
+        loss.backward()
 
         # TODO: perform an optimizer step
-        pass
+        self.optimizer.step()
 
         return {
             "Actor Loss": loss.item(),
