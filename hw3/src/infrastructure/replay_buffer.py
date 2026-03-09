@@ -1,6 +1,7 @@
 import numpy as np
 
-
+# stores transitions which are sampled from off-policy network
+# by randomly sampling transitions from replay buffer, decorrelates transitions
 class ReplayBuffer:
     def __init__(self, capacity=1000000):
         self.max_size = capacity

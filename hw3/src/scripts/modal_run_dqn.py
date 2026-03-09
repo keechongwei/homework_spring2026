@@ -7,7 +7,7 @@ from scripts.run_dqn import main
 
 
 APP_NAME = "hw3-ql"
-NETRC_PATH = Path("~/.netrc").expanduser()
+NETRC_PATH = Path("~/_netrc").expanduser()
 PROJECT_DIR = "/root/project"
 VOLUME_PATH = "/root/vol"
 DEFAULT_GPU = "T4"
@@ -63,8 +63,7 @@ env = {
     "PYTHONPATH": f"{PROJECT_DIR}/src",
 }
 
-
-@app.function(volumes={VOLUME_PATH: volume}, timeout=60 * 60 * 3, env=env, image=image, gpu=DEFAULT_GPU, cpu=DEFAULT_CPU, memory=DEFAULT_MEMORY)
+@app.function(volumes={VOLUME_PATH: volume}, timeout=60 * 60 * 5, env=env, image=image, gpu=DEFAULT_GPU, cpu=DEFAULT_CPU, memory=DEFAULT_MEMORY)
 def hw3_dqn_remote(*args: str) -> None:
     import os
 

@@ -25,13 +25,18 @@ def basic_dqn_config(
     learning_rate: float = 1e-3,
     total_steps: int = 1000000,
     discount: float = 0.99,
+    # steps interval in which online network params are copied into target network params
     target_update_period: int = 1000,
     clip_grad_norm: Optional[float] = None,
+    # Double q uses online network for selecting action
+    # and target network for evaluating action
+    # decorrelates noise
     use_double_q: bool = False,
     learning_starts: int = 20000,
     batch_size: int = 128,
     **kwargs
 ):
+    # outputs a vector of Q values for actions
     def make_critic(observation_shape: Tuple[int, ...], num_actions: int) -> nn.Module:
         return DQNCritic(
             observation_shape=observation_shape,
@@ -40,23 +45,56 @@ def basic_dqn_config(
             size=hidden_size,
         )
 
+    # optimiser which minimises TD Divergence for DQN
     def make_optimizer(params: torch.nn.ParameterList) -> torch.optim.Optimizer:
         return torch.optim.Adam(params, lr=learning_rate)
 
+    # LR scheduler, default is constant LR. No cosine annealing or other decaying LR
     def make_lr_schedule(
         optimizer: torch.optim.Optimizer,
     ) -> torch.optim.lr_scheduler._LRScheduler:
         return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0)
 
-    exploration_schedule = PiecewiseSchedule(
-        [
-            (0, 1.0),
-            (total_steps * 0.3, 0.1),  # Decay to 0.1 over 30% of steps (more gradual)
-            (total_steps * 0.6, 0.02),  # Then decay to 0.02 by 60% of steps
-        ],
-        outside_value=0.02,
-    )
+    # defines how epsilon changes in epsilon-greedy solution
+    # p(explore) = epsilon
+    # p(argmax(Q function(s,a))) = 1 - epsilon
 
+    # # Original 
+    # exploration_schedule = PiecewiseSchedule(
+    #     [
+    #         (0, 1.0),
+    #         (total_steps * 0.3, 0.1),  # Decay to 0.1 over 30% of steps (more gradual)
+    #         (total_steps * 0.6, 0.02),  # Then decay to 0.02 by 60% of steps
+    #     ],
+    #     outside_value=0.02,
+    # )
+    # # Experiment 1: more gradual decay
+    # exploration_schedule = PiecewiseSchedule(
+    #     [
+    #         (0, 1.0),
+    #         (total_steps * 0.5, 0.1),  # Decay to 0.1 over 50% of steps (more gradual)
+    #         (total_steps * 0.7, 0.01),  # Then decay to 0.01 by 70% of steps
+    #     ],
+    #     outside_value=0.02,
+    # )
+    # # Experiment 2: end exploration early 
+    # exploration_schedule = PiecewiseSchedule(
+    #     [
+    #         (0, 1.0),
+    #         (total_steps * 0.2, 0.1),  # Decay to 0.1 over 20% of steps (more gradual)
+    #         (total_steps * 0.7, 0.01),  # Then decay to 0.01 by 70% of steps
+    #     ],
+    #     outside_value=0.02,
+    # )
+    # # Experiment 3: Don't end exploration  
+    # exploration_schedule = PiecewiseSchedule(
+    #     [
+    #         (0, 1.0),
+    #         (total_steps * 0.2, 0.1),  # Decay to 0.1 over 50% of steps (more gradual)
+    #         (total_steps, 0.01),  # Then decay to 0.01 over remaining steps
+    #     ],
+    #     outside_value=0.02,
+    # )
     def make_env(eval=False, render=False):
         return RecordEpisodeStatistics(
             gym.make(env_name, render_mode="rgb_array" if render else None)
