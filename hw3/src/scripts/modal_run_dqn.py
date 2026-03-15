@@ -63,6 +63,7 @@ env = {
     "PYTHONPATH": f"{PROJECT_DIR}/src",
 }
 
+
 @app.function(volumes={VOLUME_PATH: volume}, timeout=60 * 60 * 5, env=env, image=image, gpu=DEFAULT_GPU, cpu=DEFAULT_CPU, memory=DEFAULT_MEMORY)
 def hw3_dqn_remote(*args: str) -> None:
     import os
