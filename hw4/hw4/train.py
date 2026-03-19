@@ -189,9 +189,29 @@ def compute_group_advantages(rewards: torch.Tensor, group_size: int, eps: float 
     # IMPORTANT SHAPE CONVENTION:
     # reshape to [num_groups, group_size] (NOT [group_size, num_groups]) before
     # normalizing within each prompt's group.
-    #
+    # if rewards.numel() is not divisible by group_size, the last group will be smaller and should still be normalized correctly.
+    advantages = rewards.reshape(-1, group_size)
+
+    # if group_size <= 1
+    # or if the input rewards vector is empty, we cannot do any group-relative normalization, so just return the original rewards as advantages.
+    if advantages.shape[1] <= 1:
+        return rewards
+    mean_rewards = advantages.mean(dim=1, keepdim=True)
+    std_rewards = advantages.std(dim=1, keepdim=True, unbiased=False)
+    advantages = (advantages - mean_rewards) / (std_rewards + eps)
+    
     # For each group g and candidate i:
     #   A_{g,i} = (r_{g,i} - mean(r_g)) / (std(r_g) + eps)
+    # for g in range(advantages.shape[0]):
+    #     r_g = advantages[g]
+    #     mean_g = r_g.mean()
+    #     std_g = r_g.std(unbiased=False)
+    #     # if std_g < 1e-8:
+    #     #     # If the std is too small, we can end up with huge advantages that destabilize training.
+    #     #     # In this case, we can skip normalization and just use zero-centered rewards as advantages for this group.
+    #     #     advantages[g] = r_g - mean_g
+    #     # else:
+    #     advantages[g] = (r_g - mean_g) / (std_g + eps)
     # Use the population standard deviation within each group (PyTorch:
     # std(..., unbiased=False)), not the sample-standard-deviation correction.
     #
@@ -202,16 +222,25 @@ def compute_group_advantages(rewards: torch.Tensor, group_size: int, eps: float 
     #   of your choice for that group
     #
     # Return a flat tensor with the same shape/order as rewards.
-    raise NotImplementedError("student TODO: compute_group_advantages")
+    return advantages.reshape(-1)
 
 
 def maybe_normalize_advantages(advantages: torch.Tensor, enabled: bool, eps: float = 1e-6) -> torch.Tensor:
     # TODO(student): if enabled, z-score normalize the full advantage vector:
     #   A' = (A - mean(A)) / (std(A) + eps)
+    if enabled:
+        mean = advantages.mean()
+        std = advantages.std(unbiased=False)
+        # if std.item() < 1e-8:
+        #     # If the std is too small, we can end up with huge normalized advantages that destabilize training.
+        #     # In this case, we can skip normalization and just use zero-centered advantages.
+        #     return advantages - mean
+        return (advantages - mean) / (std + eps)
+    else:
+        return advantages
     # Again use the population standard deviation (unbiased=False).
     # Otherwise return A unchanged.
     # Keep the output shape identical to the input shape.
-    raise NotImplementedError("student TODO: maybe_normalize_advantages")
 
 
 def maybe_update_warmup_lr(optimizer: torch.optim.Optimizer, base_lr: float, step: int, warmup_steps: int) -> None:

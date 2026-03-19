@@ -78,16 +78,21 @@ class Reinforce(RLAlgorithm):
             # optimizer updates / accumulation steps.
             #
             # Suggested order:
-            # 1. new_logp = compute_per_token_logprobs(model, mb.input_ids, mb.attention_mask)
+            # 1. new_logp = compute_per_token_logprobs(model, mb.input_ids, mb.attention_mask)\
+            new_logp = compute_per_token_logprobs(model, mb.input_ids, mb.attention_mask)
             # 2. Average completion-token log-probs within each sampled completion:
             #      seq_logp_i = sum_t mask_{i,t} * logp_{i,t} / (sum_t mask_{i,t} + eps)
             #    The helper masked_mean_per_row(...) imported above is useful here.
+            seq_logp = masked_mean_per_row(new_logp, mask)  # [B_mb]
             # 3. Form the sequence-level REINFORCE objective:
             #      pg_loss = - mean_i (A_i * seq_logp_i)
+            # pg_loss = -(adv * seq_logp).mean()  # [B_mb] -> scalar
+            pg_loss = -masked_mean(adv * seq_logp, torch.ones_like(adv), eps=1e-8)
             # 4. kl = approx_kl_from_logprobs(new_logp, mb.ref_logprobs, mask)
+            kl = approx_kl_from_logprobs(new_logp, mb.ref_logprobs, mask)
             # 5. entropy = -masked_mean(new_logp, mask) for LOGGING ONLY
+            entropy = -masked_mean(new_logp, mask)
             #    (do not add an entropy term to the loss)
-            raise NotImplementedError("student TODO: Reinforce.update minibatch computations")
 
             loss = (pg_loss + cfg.kl_coef * kl) / max(1, grad_accum_steps)
             if not torch.isfinite(loss):

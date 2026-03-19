@@ -24,26 +24,42 @@ def compute_per_token_logprobs(
     #   out = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
     # and then out.logits has shape [B, L, V].
     #
-    # For token position t>=1, use logits at position t-1 to score target token x_t:
-    #   log p(x_t | x_<t) = log_softmax(logits[:, t-1, :])[x_t].
-    #
-    # The naive implementation would take logits[:, :-1, :] with shape [B, L-1, V],
-    # materialize ANOTHER dense [B, L-1, V] log_softmax tensor, and then gather the
-    # entries for the target tokens input_ids[:, 1:].
-    #
-    # A more memory-efficient path is to reuse the existing logits tensor and call
-    # F.cross_entropy(..., reduction='none'), because cross-entropy is exactly the
-    # fused "log_softmax + gather target token + negative sign" operation.
-    # Concretely:
-    # - logits[:, :-1, :] has shape [B, L-1, V]
-    # - targets = input_ids[:, 1:] has shape [B, L-1]
-    # - flatten to [(B*(L-1)), V] and [B*(L-1)]
-    # - compute per-token NLL with reduction='none'
-    # - negate and reshape back to [B, L-1]
-    #
-    # Respect enable_grad: when enable_grad=False this function should not build an
-    # autograd graph.
-    raise NotImplementedError("student TODO: compute_per_token_logprobs")
+    #     # For token position t>=1, use logits at position t-1 to score target token x_t:
+    #     #   log p(x_t | x_<t) = log_softmax(logits[:, t-1, :])[x_t].
+    #     #
+    #     # The naive implementation would take logits[:, :-1, :] with shape [B, L-1, V],
+    #     # materialize ANOTHER dense [B, L-1, V] log_softmax tensor, and then gather the
+    #     # entries for the target tokens input_ids[:, 1:].
+    #     #
+    #     # A more memory-efficient path is to reuse the existing logits tensor and call
+    #     # F.cross_entropy(..., reduction='none'), because cross-entropy is exactly the
+    #     # fused "log_softmax + gather target token + negative sign" operation.
+    #     # Concretely:
+    #     # - logits[:, :-1, :] has shape [B, L-1, V]
+    #     # - targets = input_ids[:, 1:] has shape [B, L-1]
+    #     # - flatten to [(B*(L-1)), V] and [B*(L-1)]
+    #     # - compute per-token NLL with reduction='none'
+    # # - negate and reshape back to [B, L-1]
+    # # Respect enable_grad: when enable_grad=False this function should not build an
+    # # autograd graph.
+
+    context = torch.enable_grad() if enable_grad else torch.no_grad()
+
+    with context:
+        out = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+        logits = out.logits  # [B, L, V]
+
+        logits = logits[:, :-1, :].contiguous()
+        targets = input_ids[:, 1:].contiguous()
+
+        logits = logits.view(-1, logits.shape[-1])
+        targets = targets.view(-1)
+
+        per_token_nll = F.cross_entropy(logits, targets, reduction="none")
+
+    per_token_logprobs = -per_token_nll.view(input_ids.size(0), -1)
+
+    return per_token_logprobs
 
 
 def build_completion_mask(
@@ -60,13 +76,23 @@ def build_completion_mask(
     # token input_ids[:, t+1]. Therefore:
     #   mask[:, t] should be 1 iff token (t+1) belongs to the generated completion
     #   and is not padding; otherwise 0.
+    mask = torch.zeros_like(input_ids, dtype=torch.float)  # [B, L]
     # Equivalently, the FIRST completion token lives at token index prompt_input_len
+    # so first token used to score first completion token is prompt_input_len -1
+    first_completion_token_index = prompt_input_len
+    # So we want to set mask[:, first_completion_token_index:] = attention_mask[:, first_completion_token_index:]
+    # but we need to be careful about the off-by-one because the output logprobs
+    # are indexed from 0 to L-2, and logprobs[:, t] corresponds to input_ids[:, t+1].
+    mask[:, first_completion_token_index -1 : -1] = attention_mask[:, first_completion_token_index :]
+    # for i in range(input_ids.shape[0]):
+    #     for t in range(input_ids.shape[1]):
+    #         if t >= first_completion_token_index -1 and input_ids[i, t] != pad_token_id:
+    #             mask[i, t] = 1.0
     # in input_ids, which corresponds to per-token logprob index prompt_input_len - 1.
-    #
     # prompt_input_len is the (padded) prompt length before completion tokens were
     # appended. You can use attention_mask to exclude padding; pad_token_id is passed
     # for convenience but a direct attention-mask-based solution is fine.
-    raise NotImplementedError("student TODO: build_completion_mask")
+    return mask[:, :-1]  # [B, L-1] 
 
 
 def masked_sum(x: torch.Tensor, mask: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
@@ -98,9 +124,12 @@ def approx_kl_from_logprobs(
     #
     # Compute:
     # 1. delta = clamp(log p_ref(a) - log p_new(a), [-log_ratio_clip, log_ratio_clip])
+    delta = ref_logprobs - new_logprobs
+    delta = torch.clamp(delta, -log_ratio_clip, log_ratio_clip)
     # 2. per_token = exp(delta) - delta - 1
+    per_token = torch.exp(delta) - delta - 1
     # 3. return the masked average over completion tokens
-    #
+    return masked_mean(per_token, mask, eps)
     # Why this estimates KL(p_new || p_ref):
     # With delta = log(p_ref(a) / p_new(a)) and a ~ p_new,
     #   E[exp(delta)] = E[p_ref(a) / p_new(a)] = 1.
@@ -110,4 +139,3 @@ def approx_kl_from_logprobs(
     #                             = KL(p_new || p_ref).
     #
     # The clamp to [-20, 20] is for numerical stability / variance control.
-    raise NotImplementedError("student TODO: approx_kl_from_logprobs")

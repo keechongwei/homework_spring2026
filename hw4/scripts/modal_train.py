@@ -8,7 +8,7 @@ import modal
 
 
 APP_NAME = "hw4-llm-rl"
-NETRC_PATH = Path("~/.netrc").expanduser()
+NETRC_PATH = Path("~/_netrc").expanduser()
 PROJECT_DIR = "/root/project"
 VOLUME_PATH = "/vol"
 DEFAULT_GPU = "H100"

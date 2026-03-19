@@ -78,25 +78,38 @@ class GRPO(RLAlgorithm):
                 #
                 # Suggested order:
                 # 1. new_logp = compute_per_token_logprobs(model, mb.input_ids, mb.attention_mask)
+                new_logp = compute_per_token_logprobs(model, mb.input_ids, mb.attention_mask)
                 # 2. log_ratio = clamp(new_logp - mb.old_logprobs, [-20, 20]) BEFORE exp
                 #    for numerical stability
+                log_ratio = new_logp - mb.old_logprobs
+                log_ratio = torch.clamp(log_ratio, -20.0, 20.0) 
                 # 3. ratio = exp(log_ratio)
+                ratio = torch.exp(log_ratio)
                 # 4. Broadcast advantages to per-token shape via adv.unsqueeze(1)
+                adv_broadcast = adv.unsqueeze(1)  # [B_mb, 1]
                 # 5. Build the PPO-style unclipped / clipped token objectives:
                 #      unclipped_t = ratio_t * A_i
                 #      clipped_t   = clip(ratio_t, 1-clip_eps, 1+clip_eps) * A_i
                 #      per_token_obj_t = min(unclipped_t, clipped_t) * mask_t
+                unclipped = ratio * adv_broadcast  # [B_mb, L-1]
+                clipped_t = torch.clamp(ratio, 1.0 - cfg.clip_eps, 1.0 + cfg.clip_eps) * adv_broadcast
+                per_token_obj = torch.min(unclipped, clipped_t) * mask  # [B_mb, L-1]
                 # 6. Zero out prompt/padding positions with mask, then average over
                 #    completion-token positions within each sampled completion:
                 #      seq_obj_i = sum_t per_token_obj_{i,t} / (sum_t mask_{i,t} + eps)
                 #    The helper masked_mean_per_row(...) imported above is useful here.
+                seq_obj = masked_mean_per_row(per_token_obj, mask)  # [B_mb]
                 # 7. pg_loss = - mean_i seq_obj_i
+                pg_loss = -masked_mean(seq_obj, torch.ones_like(seq_obj), eps=1e-8)
                 # 8. kl = approx_kl_from_logprobs(new_logp, mb.ref_logprobs, mask)
+                kl = approx_kl_from_logprobs(new_logp, mb.ref_logprobs, mask)
                 # 9. entropy = -masked_mean(new_logp, mask) for LOGGING ONLY
+                entropy = -masked_mean(new_logp, mask)
                 #    (do not add an entropy term to the loss)
                 # 10. clipfrac = masked fraction of completion-token positions where
                 #     the PPO ratio was clipped outside [1-clip_eps, 1+clip_eps]
-                raise NotImplementedError("student TODO: GRPO.update minibatch computations")
+                clipfrac = ((ratio > (1.0 + cfg.clip_eps)) | (ratio < (1.0 - cfg.clip_eps))).float()
+                clipfrac = masked_mean(clipfrac, mask)
 
                 loss = (pg_loss + cfg.kl_coef * kl) / max(1, grad_accum_steps)
                 if not torch.isfinite(loss):
