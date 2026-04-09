@@ -8,7 +8,7 @@ from scripts.run import main, setup_arguments
 
 
 APP_NAME = "hw5-offline-rl"
-NETRC_PATH = Path("~/.netrc").expanduser()
+NETRC_PATH = Path("~/_netrc").expanduser()
 PROJECT_DIR = "/root/project"
 VOLUME_PATH = "/root/exp"
 DEFAULT_GPU = "T4"

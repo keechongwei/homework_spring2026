@@ -5,7 +5,7 @@ from datetime import datetime
 import numpy as np
 import torch
 import tqdm
-
+import wandb
 import configs
 from agents import agents
 from infrastructure import utils
@@ -70,6 +70,7 @@ def run_training_loop(config: dict, train_logger, eval_logger, args: argparse.Na
             )
 
     dump_log(agent, train_logger, eval_logger, config, args.save_dir)
+    wandb.finish()
 
 
 def setup_arguments(args=None):
@@ -130,6 +131,7 @@ def main(args):
     eval_logger = Logger(os.path.join(args.save_dir, 'eval.csv'))
 
     run_training_loop(config, train_logger, eval_logger, args)
+    
 
 
 if __name__ == "__main__":
